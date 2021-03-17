@@ -15,8 +15,13 @@
       >
         <co-icon type="chevron-left"></co-icon>
       </button>
-      <div class="co-carousel__list" :style="listStyles">
-        <slot></slot>
+      <div class="co-carousel__list" :style="listStyles" ref="carouselList">
+        <div>
+          <slot></slot>
+        </div>
+        <div>
+          <slot></slot>
+        </div>
       </div>
       <button
         :class="[
@@ -35,7 +40,7 @@
           'co-carousel__dot',
           { 'co-carousel__dot--active': currentIndex === index }
         ]"
-        v-for="(item, index) in items"
+        v-for="(item, index) in (items.length>1?items.length/2:items.length)"
         :key="index"
         @click="onDotEvent('click', index)"
         @mouseover="onDotEvent('hover', index)"
@@ -113,7 +118,8 @@ export default {
       listOffset: 0,
       timeoutID: null,
       items: [],
-      resizeHandler: null
+      resizeHandler: null,
+      isTransition: true
     };
   },
   computed: {
@@ -121,7 +127,9 @@ export default {
       return {
         width: `${this.listWidth}px`,
         transform: `translate3d(-${this.listOffset}px, 0, 0)`,
-        transition: `transform ${this.duration}ms ${this.easing}`
+        transition: this.isTransition
+          ? `transform ${this.duration}ms ${this.easing}`
+          : ""
       };
     },
     dotsClasses() {
@@ -153,6 +161,8 @@ export default {
     }
   },
   mounted() {
+    // this.$slots.push(this.$slots.default[0])
+    // console.log("获取插槽",this.$slots.default)
     this.updateItems();
     this.onResize();
     this.setAutoplay();
@@ -206,16 +216,35 @@ export default {
     },
     play(step) {
       let index = this.currentIndex;
-
-      index += step;
-
-      while (index < 0) {
-        index += this.items.length;
+      if (step == -1) {
+        if (index <= 0) {
+          index = this.items.length/2;
+          this.isTransition = false;
+        } else {
+          this.isTransition = true;
+        }
+        this.currentIndex = index;
+        this.$emit("input", index);
+        setTimeout(() => {
+          index += step;
+          this.isTransition = true;
+          this.currentIndex = index;
+          this.$emit("input", index);
+        }, 500);
+      } else {
+        index += step;
+        this.isTransition = true;
+        this.currentIndex = index;
+        this.$emit("input", index);
+        setTimeout(() => {
+          if (index >= this.items.length /2) {
+            index = 0;
+            this.isTransition = false;
+          }
+          this.currentIndex = index;
+          this.$emit("input", index);
+        }, 500);
       }
-
-      index %= this.items.length;
-      this.currentIndex = index;
-      this.$emit("input", index);
     },
     setAutoplay() {
       if (this.timeoutID) {

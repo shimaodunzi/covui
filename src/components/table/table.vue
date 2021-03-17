@@ -42,12 +42,12 @@
         v-else
         ref="body"
         id="tablebody"
-        :class="{ marquee_top: animate }"
         :style="bodyStyles"
+        :class="{ marquee_top: animate }"
         :flatten-columns="flattenColumns"
         :left-fixed-columns="leftFixedColumns"
         :right-fixed-columns="rightFixedColumns"
-        :hover="hover"
+        :hover="hover || carouselHover"
         :hover-index="hoverIndex"
         :data="filterData"
         :row-key="rowKey"
@@ -96,7 +96,7 @@
           :flatten-columns="flattenColumns"
           :left-fixed-columns="leftFixedColumns"
           :right-fixed-columns="rightFixedColumns"
-          :hover="hover"
+          :hover="hover || carouselHover"
           :hover-index="hoverIndex"
           :data="filterData"
           @hover-in="onHoverIn"
@@ -142,7 +142,7 @@
           :flatten-columns="flattenColumns"
           :left-fixed-columns="leftFixedColumns"
           :right-fixed-columns="rightFixedColumns"
-          :hover="hover"
+          :hover="hover || carouselHover"
           :hover-index="hoverIndex"
           :data="filterData"
           @hover-in="onHoverIn"
@@ -179,22 +179,8 @@ export default {
   },
   props: {
     //轮播设置
-    carousel:null,
-    // //轮播时的速度
-    // speed: {
-    //   type: Number,
-    //   default: 3000
-    // },
-    // //轮播时显示的行数
-    // rowPages: {
-    //   type: Number,
-    //   default: 5
-    // },
-    // //轮播类型 行轮播:"rowCarousel" 整页轮播:"pageCarousel"
-    // isCarousel: {
-    //   type: String,
-    //   default: ""
-    // },
+    carousel: null,
+    pageSize: Number,
     // 显示的数据
     data: {
       type: Array,
@@ -280,16 +266,20 @@ export default {
       onMousewheelProxy: throttle(this.onMousewheel, 17),
       onBodyScrollProxy: throttle(this.onBodyScroll, 17),
       containerHeight: 0, //轮播容器的高度
-      distance: 0,//滚动一次需要移动的距离
+      distance: 0, //滚动的距离
+      currentPage: 1,
+      bodyHeight: 0,
+      timer: null,
       animate: false,
+      pageDistance: 0
     };
   },
   computed: {
-    speed() {
-      return (this.carousel?this.carousel.speed:1000);
+    carouselHover() {
+      return this.carousel !== null && this.carousel !== undefined;
     },
-    rowPages() {
-      return (this.carousel?this.carousel.rowNums:5);
+    speed() {
+      return this.carousel ? this.carousel.speed : 1000;
     },
     noData() {
       return this.data.length === 0;
@@ -314,7 +304,7 @@ export default {
       const { sortingColumn, sortProp, data } = this;
 
       if (!sortingColumn || !sortProp || sortingColumn.sortable === "custom") {
-        return data
+        return data;
       }
 
       return orderBy(
@@ -358,20 +348,34 @@ export default {
     },
     bodyWrapStyles() {
       const styles = {};
-      if (this.carousel) {
-          styles.height = `${this.containerHeight}px`;
+      if (this.carousel && this.data.length > this.pageSize) {
+        styles.height = `${this.containerHeight}px`;
         styles.overflow = "hidden";
-      }else if(typeof this.height === "number") {
-          styles.height = `${this.layout.height}px`;
-        }
-        return styles;
+      } else if (typeof this.height === "number") {
+        styles.height = `${this.layout.height}px`;
+      }
+      return styles;
     },
     bodyStyles() {
-      if (this.animate) {
-        return {
-          width: `${this.layout.width}px`,
-          marginTop: `${this.distance}px`
-        };
+      if (this.carousel && this.data.length > this.pageSize) {
+        if (this.carousel.type === "rowCarousel") {
+          return {
+            width: `${this.layout.width}px`,
+            position: "relative",
+            top: `${-this.distance}px`
+          };
+        } else {
+          if (this.animate) {
+            return {
+              width: `${this.layout.width}px`,
+              marginTop: `${this.pageDistance}px`
+            };
+          } else {
+            return {
+              width: `${this.layout.width}px`
+            };
+          }
+        }
       } else {
         return {
           width: `${this.layout.width}px`
@@ -393,7 +397,7 @@ export default {
     },
     showHeader() {
       this.$nextTick(this.updateHeight);
-    },
+    }
   },
   mounted() {
     this.bindEvent();
@@ -461,9 +465,19 @@ export default {
       }
     },
     onHoverIn(index) {
+      if (this.carousel && this.data.length > this.pageSize) {
+        clearInterval(this.timer);
+      }
       this.hoverIndex = index;
     },
     onHoverOut(index) {
+      if (this.carousel && this.data.length > this.pageSize) {
+        if (this.carousel.type === "rowCarousel") {
+          this.rowCarsouel(this.bodyHeight);
+        } else {
+          this.pageCarsouel();
+        }
+      }
       this.hoverIndex = index;
     },
     fixedStyles(type) {
@@ -483,62 +497,68 @@ export default {
 
       return style;
     },
-    //自动轮播
-    autoCarousel() {
-      let trHeight =this.$refs.bodyWrap.getElementsByTagName("tr");
-        let Y = 0;
-        if(this.carousel&&this.carousel.type === "rowCarousel"){
-          Y=trHeight[0].clientHeight;
-          this.data.push(this.data[0]);
-        }else if(this.carousel&&this.carousel.type === "pageCarousel"){
-            for (let i = 0; i < this.rowPages; i++) {
-              Y = Y + trHeight[i].clientHeight;
-              this.data.push(this.data[i])
+    carouselReset() {
+      if (this.carousel && this.data.length > this.pageSize) {
+        if (this.carousel.type === "rowCarousel") {
+          for (let i = 0; i < this.pageSize; i++) {
+            this.data.push(this.data[i]);
           }
         }
-        this.distance = 0;
-        this.distance = this.distance - Y;
-        this.animate = true;
-        setTimeout(() => {
-          if (this.carousel.type === "rowCarousel"){
-            this.data.shift();
-          }else if (this.carousel.type === "pageCarousel"){
-            this.data.splice(0,this.rowPages);
-          }
-          this.animate = false;
-          this.containerHeight = 0;
-          for (let i = 1; i < this.rowPages+1; i++) {
-            this.containerHeight =
-              this.containerHeight + trHeight[i].clientHeight;
-          }
-        }, 500);
-    },
-    carouselReset(){
-      if (this.carousel) {
         setTimeout(() => {
           //初始化容器高度
           let trHeight = this.$refs.bodyWrap.getElementsByTagName("tr");
-          if(this.data.length<this.rowPages){
-            for (let i = 0; i < this.data.length; i++) {
-              this.containerHeight =
-                      this.containerHeight + trHeight[i].clientHeight;
+          for (let i = 0; i < this.pageSize; i++) {
+            this.containerHeight =
+              this.containerHeight + trHeight[i].clientHeight;
+          }
+          if (this.carousel.type === "rowCarousel") {
+            this.bodyHeight = 0;
+            for (let i = 0; i < trHeight.length - this.pageSize; i++) {
+              this.bodyHeight = this.bodyHeight + trHeight[i].clientHeight;
             }
-          }else{
-            for (let i = 0; i < this.rowPages; i++) {
-              this.containerHeight =
-                      this.containerHeight + trHeight[i].clientHeight;
-            }
-            this.timer = setInterval(() => {
-              this.autoCarousel();
-            }, this.speed);
+            this.rowCarsouel(this.bodyHeight);
+            // this.addKeyframesRule(bodyHeight);
+          } else {
+            this.pageCarsouel();
           }
         }, 500);
       }
     },
+    rowCarsouel(h) {
+      clearInterval(this.timer);
+      this.timer = setInterval(() => {
+        this.distance++;
+        if (this.distance >= h) {
+          this.distance = 0;
+        }
+      }, this.speed / (h / this.data.length + this.pageSize));
+    },
+    pageCarsouel() {
+      this.timer = setInterval(() => {
+        let trHeight = this.$refs.bodyWrap.getElementsByTagName("tr");
+        let Y = 0;
+        for (let i = 0; i < this.pageSize; i++) {
+          Y = Y + trHeight[i].clientHeight;
+          this.data.push(this.data[i]);
+        }
+        this.pageDistance = 0;
+        this.pageDistance = this.pageDistance - Y;
+        this.animate = true;
+        setTimeout(() => {
+          this.data.splice(0, this.pageSize);
+          this.animate = false;
+          this.containerHeight = 0;
+          for (let i = 1; i < this.pageSize + 1; i++) {
+            this.containerHeight =
+              this.containerHeight + trHeight[i].clientHeight;
+          }
+        }, 500);
+      }, this.speed);
+    }
   },
   created() {
     this.$nextTick(() => {
-        this.carouselReset();
+      this.carouselReset();
     });
   },
   components: {
@@ -546,6 +566,9 @@ export default {
     TableBody
   },
   destroyed() {
+    if (this.carousel && this.carousel.type === "rowCarousel") {
+      this.data.splice(0, this.pageSize);
+    }
     clearInterval(this.timer);
   }
 };
